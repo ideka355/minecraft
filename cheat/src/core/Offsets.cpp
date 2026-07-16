@@ -1,6 +1,7 @@
 #include "core/Offsets.h"
 
 #include <fstream>
+#include <sstream>
 
 #include <nlohmann/json.hpp>
 
@@ -20,6 +21,12 @@ uintptr_t HexField(const nlohmann::json& j, const char* key) {
         return static_cast<uintptr_t>(v.get<uint64_t>());
     }
     return 0;
+}
+
+std::string ToHex(uintptr_t value) {
+    std::ostringstream oss;
+    oss << "0x" << std::hex << value;
+    return oss.str();
 }
 
 }  // namespace
@@ -57,9 +64,39 @@ bool Offsets::LoadFromFile(const std::wstring& path) {
     return true;
 }
 
+bool Offsets::SaveToFile(const std::wstring& path) const {
+    nlohmann::json j;
+    j["_comment"] =
+        "Written by the in-game offset auto-finder. Values are byte offsets/RVAs; hex "
+        "strings are used for readability.";
+    j["clientInstanceRva"] = ToHex(clientInstanceRva);
+    j["positionOffset"] = ToHex(positionOffset);
+    j["velocityOffset"] = ToHex(velocityOffset);
+    j["onGroundOffset"] = ToHex(onGroundOffset);
+    j["noClipFlagOffset"] = ToHex(noClipFlagOffset);
+
+    nlohmann::json chain = nlohmann::json::array();
+    for (uintptr_t hop : localPlayerChain) {
+        chain.push_back(ToHex(hop));
+    }
+    j["localPlayerChain"] = chain;
+
+    std::ofstream file(path);
+    if (!file.is_open()) {
+        return false;
+    }
+    file << j.dump(2);
+    return file.good();
+}
+
 Offsets& GetOffsets() {
     static Offsets offsets;
     return offsets;
+}
+
+std::wstring& GetPersistentConfigPath() {
+    static std::wstring path;
+    return path;
 }
 
 }  // namespace core

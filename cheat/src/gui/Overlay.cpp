@@ -52,11 +52,14 @@ LRESULT __stdcall DetourWndProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lPara
     if (ClickGui::visible) {
         ImGui_ImplWin32_WndProcHandler(hwnd, msg, wParam, lParam);
         ImGuiIO& io = ImGui::GetIO();
-        bool blockMouse = io.WantCaptureMouse &&
-                           (msg >= WM_MOUSEFIRST && msg <= WM_MOUSELAST);
-        bool blockKeyboard = io.WantCaptureKeyboard &&
-                              (msg >= WM_KEYFIRST && msg <= WM_KEYLAST);
-        if (blockMouse || blockKeyboard) {
+        // Only swallow mouse input the GUI actually wants (so clicking a button doesn't
+        // also register as a left-click in the world). Keyboard is deliberately never
+        // blocked here: the offset finder needs WASD/Space to keep reaching the game
+        // while its window has focus, since that's how you move to narrow candidates.
+        // ImGui text fields still work fine either way -- they already received the key
+        // via the WndProcHandler call above, independent of whether we forward it on.
+        bool blockMouse = io.WantCaptureMouse && (msg >= WM_MOUSEFIRST && msg <= WM_MOUSELAST);
+        if (blockMouse) {
             return TRUE;
         }
     }

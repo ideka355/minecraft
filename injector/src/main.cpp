@@ -20,6 +20,7 @@
 #include <aclapi.h>
 #include <sddl.h>
 #include <iostream>
+#include <fstream>
 #include <string>
 #include <filesystem>
 
@@ -241,6 +242,21 @@ int wmain() {
     std::error_code ec;
     fs::copy_file(persistentOffsets, workDir / L"offsets.json",
                    fs::copy_options::overwrite_existing, ec);
+
+    // Leave a marker pointing back at the persistent (exe-adjacent) offsets.json, in UTF-8,
+    // so the offset auto-finder inside the DLL can save its results somewhere that
+    // survives after this run's temp directory is gone.
+    std::ofstream configPointer(workDir / L"config_path.txt", std::ios::binary);
+    if (configPointer.is_open()) {
+        int utf8Len = WideCharToMultiByte(CP_UTF8, 0, persistentOffsets.c_str(), -1, nullptr,
+                                           0, nullptr, nullptr);
+        std::string utf8Path(utf8Len > 0 ? utf8Len - 1 : 0, '\0');
+        if (utf8Len > 0) {
+            WideCharToMultiByte(CP_UTF8, 0, persistentOffsets.c_str(), -1, utf8Path.data(),
+                                 utf8Len, nullptr, nullptr);
+        }
+        configPointer << utf8Path;
+    }
 
     std::wcout << L"Waiting for " << kTargetProcessName << L"...\n";
 

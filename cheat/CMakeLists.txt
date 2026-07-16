@@ -11,6 +11,7 @@ add_library(cheat SHARED
     src/core/GameMemory.cpp
     src/core/ModuleManager.cpp
     src/core/InputManager.cpp
+    src/core/MemoryRegions.cpp
     src/gui/Overlay.cpp
     src/gui/ClickGui.cpp
     src/modules/movement/Flight.cpp
@@ -18,6 +19,10 @@ add_library(cheat SHARED
     src/modules/movement/NoFall.cpp
     src/modules/movement/NoClip.cpp
     src/modules/movement/Spider.cpp
+    src/tools/IncrementalScanner.cpp
+    src/tools/Vec3Utils.cpp
+    src/tools/PointerScanner.cpp
+    src/tools/OffsetWizard.cpp
 )
 
 set_target_properties(cheat PROPERTIES OUTPUT_NAME "cheat")

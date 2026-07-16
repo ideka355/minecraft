@@ -18,25 +18,45 @@ are embedded as resources and self-extract at runtime. Nothing else needs to be 
 - `cheat/` — the DLL, unchanged by the single-exe packaging:
   - `src/core/` — MinHook wrapper (`Hook`), AOB pattern scanner (`PatternScanner`),
     JSON-backed offset table (`Offsets`), SEH-guarded memory read/write (`GameMemory`),
-    module base class + registry (`Module`, `ModuleManager`), keybind polling
-    (`InputManager`).
+    writable-memory region enumeration (`MemoryRegions`), module base class + registry
+    (`Module`, `ModuleManager`), keybind polling (`InputManager`).
   - `src/gui/` — generic D3D11 swapchain `Present` hook (`Overlay`) that draws an ImGui
     click-GUI (`ClickGui`) listing every module with a checkbox. Insert toggles the GUI.
   - `src/modules/movement/` — Flight (F1), Speed (F2), NoFall (GUI-only), NoClip (F3),
     Spider (F4).
+  - `src/tools/` — the offset auto-finder (below): `IncrementalScanner` (Cheat-Engine-style
+    value narrowing), `Vec3Utils` (groups surviving floats into position/velocity-shaped
+    triplets), `PointerScanner` (BFS pointer-chain search + cross-respawn validation),
+    `OffsetWizard` (the guided panel tying it together, F5).
 - `config/offsets.json` — the only place game-version-specific addresses live, and the
   template embedded into the exe as the first-run default.
 
-## The one thing this scaffold can't do for you
+## Finding offsets: the in-game auto-finder (F5)
 
-`Offsets`, `PatternScanner`, and the hook/GUI framework are all generic and functional as
-written. What's genuinely missing is **your build's actual memory layout** — the address of
-the local player, and the byte offsets to position/velocity/on-ground/collision within it.
-Those change with every Minecraft.Windows.exe update and can't be guessed or hardcoded
-correctly ahead of time. Every movement module checks its required offsets and silently
-no-ops if they're zero, rather than writing to a garbage address and crashing the game.
+Press **F5** in-game to open the Offset Finder. It can't run unattended — there's no way for
+code to know which memory address is "position" without watching what changes while you
+physically move — but it automates the rest of what you'd otherwise do by hand in Cheat
+Engine:
 
-To fill in offsets:
+1. **Position**: it snapshots all plausible float values in the game's writable memory, then
+   you walk for a second and click Narrow, repeating a few times until only a handful of
+   candidates remain. You then click the one matching your F3 coordinates.
+2. **Velocity** / **on-ground**: same idea, scoped to a small window around the position
+   address you just confirmed — move again for velocity, jump a few times for on-ground.
+3. **Pointer chain**: it searches the game module's static memory for a chain of pointers
+   that resolves to your position address (an automated version of Cheat Engine's pointer
+   scan), so the offset keeps working across relaunches rather than just this session.
+4. If more than one chain candidate survives, it asks you to die/respawn (or relog) and type
+   your new coordinates in, then keeps only the chains that still resolve correctly —
+   coincidental matches won't.
+5. On success it writes straight into `offsets.json` next to `BedrockCheat.exe` and applies
+   immediately, no restart needed.
+
+This is the most complex part of the codebase and the part I could least verify without a
+live Windows + Minecraft process to test against — if a step misbehaves (finds zero
+candidates, times out, etc.), the manual path below still works as a fallback.
+
+### Manual fallback
 
 1. Attach a disassembler/debugger (x64dbg, IDA, Ghidra) to a running `Minecraft.Windows.exe`.
 2. Find the local player object — typically via a static/global pointer chain from the
@@ -49,9 +69,7 @@ To fill in offsets:
    published offsets) is the fastest way to get oriented, even though the addresses
    themselves won't match between forks/versions.
 5. Put the resulting values (hex strings or plain ints both work) into `offsets.json` next to
-   `BedrockCheat.exe` — it's auto-created there from the built-in template on first run. Each
-   launch re-copies it into that run's temp folder, so just edit the one next to the exe; no
-   rebuild needed.
+   `BedrockCheat.exe`; no rebuild needed.
 
 ## Building (Windows only)
 
@@ -75,10 +93,9 @@ build artifact; `cheat.dll` is compiled along the way but only exists embedded i
    required to attach to/inject into the sandboxed (AppContainer) Bedrock process at all.
 2. Launch Minecraft, get into a world.
 3. Run `BedrockCheat.exe` **as Administrator** (it needs elevated rights to grant the
-   extracted DLL AppContainer ACLs and to open the target process). On first run it drops an
-   `offsets.json` template next to itself — fill it in per the section above; modules no-op
-   until you do.
-4. Insert toggles the click-GUI; each module also has its own keybind (see above).
+   extracted DLL AppContainer ACLs and to open the target process).
+4. Insert toggles the click-GUI; F5 opens the Offset Finder (see above) if you haven't
+   populated `offsets.json` yet; each movement module also has its own keybind (see above).
 
 ## Scope note
 

@@ -4,6 +4,8 @@
 
 #include <cstdio>
 #include <filesystem>
+#include <fstream>
+#include <sstream>
 
 #include "core/Hook.h"
 #include "core/ModuleManager.h"
@@ -14,6 +16,7 @@
 #include "modules/movement/NoFall.h"
 #include "modules/movement/Speed.h"
 #include "modules/movement/Spider.h"
+#include "tools/OffsetWizard.h"
 
 namespace cheat {
 
@@ -27,27 +30,54 @@ void AttachConsole() {
     std::printf("cheat.dll attached\n");
 }
 
-void LoadOffsets() {
+std::filesystem::path ThisModuleDir() {
     wchar_t modulePath[MAX_PATH]{};
     HMODULE thisModule = nullptr;
     GetModuleHandleExW(
         GET_MODULE_HANDLE_EX_FLAG_FROM_ADDRESS | GET_MODULE_HANDLE_EX_FLAG_UNCHANGED_REFCOUNT,
-        reinterpret_cast<LPCWSTR>(&LoadOffsets), &thisModule);
+        reinterpret_cast<LPCWSTR>(&ThisModuleDir), &thisModule);
     GetModuleFileNameW(thisModule, modulePath, MAX_PATH);
+    return std::filesystem::path(modulePath).parent_path();
+}
 
-    std::filesystem::path offsetsPath =
-        std::filesystem::path(modulePath).parent_path() / L"offsets.json";
+void LoadOffsets(const std::filesystem::path& moduleDir) {
+    std::filesystem::path offsetsPath = moduleDir / L"offsets.json";
 
     if (!core::GetOffsets().LoadFromFile(offsetsPath.wstring())) {
         std::printf(
             "offsets.json not found or invalid next to cheat.dll (%ls) - movement "
-            "modules will no-op until it's populated.\n",
+            "modules will no-op until it's populated (or found via F5 - Offset Finder).\n",
             offsetsPath.c_str());
     } else if (!core::GetOffsets().IsValid()) {
         std::printf(
-            "offsets.json loaded but required fields are still zero - fill in "
-            "clientInstanceRva and positionOffset at minimum.\n");
+            "offsets.json loaded but clientInstanceRva is still zero - fill it in, or "
+            "run the F5 Offset Finder in-game.\n");
     }
+}
+
+// Reads the marker the injector leaves pointing at the persistent (exe-adjacent)
+// offsets.json, so the offset auto-finder has somewhere durable to save its results.
+void LoadPersistentConfigPath(const std::filesystem::path& moduleDir) {
+    std::ifstream file(moduleDir / L"config_path.txt", std::ios::binary);
+    if (!file.is_open()) {
+        return;
+    }
+
+    std::ostringstream contents;
+    contents << file.rdbuf();
+    std::string utf8Path = contents.str();
+    if (utf8Path.empty()) {
+        return;
+    }
+
+    int wideLen = MultiByteToWideChar(CP_UTF8, 0, utf8Path.c_str(), -1, nullptr, 0);
+    if (wideLen <= 0) {
+        return;
+    }
+    std::wstring widePath(wideLen - 1, L'\0');
+    MultiByteToWideChar(CP_UTF8, 0, utf8Path.c_str(), -1, widePath.data(), wideLen);
+
+    core::GetPersistentConfigPath() = widePath;
 }
 
 void RegisterModules() {
@@ -57,13 +87,17 @@ void RegisterModules() {
     manager.Register<modules::NoFall>();
     manager.Register<modules::NoClip>();
     manager.Register<modules::Spider>();
+    manager.Register<tools::OffsetWizard>();
 }
 
 }  // namespace
 
 void Init() {
     AttachConsole();
-    LoadOffsets();
+
+    std::filesystem::path moduleDir = ThisModuleDir();
+    LoadPersistentConfigPath(moduleDir);
+    LoadOffsets(moduleDir);
 
     if (!core::Hook::Init()) {
         std::printf("MinHook init failed\n");
