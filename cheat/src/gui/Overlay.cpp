@@ -13,6 +13,11 @@
 #include "core/ModuleManager.h"
 #include "gui/ClickGui.h"
 
+// imgui_impl_win32.h deliberately wraps this declaration in "#if 0" (to avoid forcing
+// <windows.h> types on every imgui user) and tells callers to paste it themselves.
+extern IMGUI_IMPL_API LRESULT ImGui_ImplWin32_WndProcHandler(HWND hWnd, UINT msg, WPARAM wParam,
+                                                               LPARAM lParam);
+
 namespace gui {
 
 namespace {

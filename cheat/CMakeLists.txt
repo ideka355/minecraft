@@ -28,7 +28,9 @@ add_library(cheat SHARED
 set_target_properties(cheat PROPERTIES OUTPUT_NAME "cheat")
 
 target_include_directories(cheat PRIVATE src)
-target_compile_definitions(cheat PRIVATE UNICODE _UNICODE)
+# NOMINMAX: windows.h's min/max macros otherwise corrupt every std::min/std::max call site
+# (e.g. "std::min(a, b)" -> "std::(a < b ? a : b)", a hard error) throughout this codebase.
+target_compile_definitions(cheat PRIVATE UNICODE _UNICODE NOMINMAX WIN32_LEAN_AND_MEAN)
 
 target_link_libraries(cheat PRIVATE
     minhook::minhook

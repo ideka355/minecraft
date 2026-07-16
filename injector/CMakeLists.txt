@@ -16,5 +16,5 @@ add_dependencies(injector cheat)
 
 set_target_properties(injector PROPERTIES OUTPUT_NAME "BedrockCheat")
 
-target_compile_definitions(injector PRIVATE UNICODE _UNICODE)
+target_compile_definitions(injector PRIVATE UNICODE _UNICODE NOMINMAX WIN32_LEAN_AND_MEAN)
 target_link_libraries(injector PRIVATE Shlwapi)
