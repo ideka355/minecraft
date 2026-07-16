@@ -89,12 +89,11 @@ build artifact; `cheat.dll` is compiled along the way but only exists embedded i
 
 ## Running
 
-1. Enable **Windows Developer Mode** (Settings > Privacy & security > For developers) —
-   required to attach to/inject into the sandboxed (AppContainer) Bedrock process at all.
-2. Launch Minecraft, get into a world.
-3. Run `BedrockCheat.exe` **as Administrator** (it needs elevated rights to grant the
-   extracted DLL AppContainer ACLs and to open the target process).
-4. Insert toggles the click-GUI; F5 opens the Offset Finder (see above) if you haven't
+1. Launch Minecraft, get into a world.
+2. Double-click `BedrockCheat.exe`. It self-elevates (accept the UAC prompt) and enables
+   Windows Developer Mode on its own via the registry value the Settings toggle sets — no
+   manual "Run as administrator" or hunting through Settings required.
+3. Insert toggles the click-GUI; F5 opens the Offset Finder (see above) if you haven't
    populated `offsets.json` yet; each movement module also has its own keybind (see above).
 
 ## Scope note

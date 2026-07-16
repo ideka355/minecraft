@@ -8,18 +8,22 @@
 // Two things a plain injector needs beyond normal CreateRemoteThread injection:
 //   1. Windows Developer Mode must be enabled on the machine (Settings > Privacy & security
 //      > For developers) so the OS allows attaching to / debugging packaged apps at all.
+//      We enable this ourselves via its underlying registry value rather than requiring the
+//      user to find the Settings toggle.
 //   2. The DLL file's ACL must grant read+execute to "ALL APPLICATION PACKAGES" (and
 //      "ALL RESTRICTED APPLICATION PACKAGES"), because an AppContainer process refuses to
 //      LoadLibrary a file its sandbox token has no access to. We do this here with
 //      SetNamedSecurityInfoW instead of shelling out to icacls.
 //
-// Run this loader elevated (as Administrator).
+// This loader self-elevates (relaunches itself via UAC) if it isn't already running as
+// Administrator, so double-clicking it is enough -- no "Run as administrator" required.
 
 #include <windows.h>
 #include <tlhelp32.h>
 #include <accctrl.h>
 #include <aclapi.h>
 #include <sddl.h>
+#include <shellapi.h>
 #include <iostream>
 #include <fstream>
 #include <string>
@@ -34,6 +38,83 @@ constexpr wchar_t kTargetProcessName[] = L"Minecraft.Windows.exe";
 // Names of the RCDATA resources embedded by injector/CMakeLists.txt.
 constexpr wchar_t kCheatDllResource[] = L"CHEATDLL";
 constexpr wchar_t kOffsetsDefaultResource[] = L"OFFSETSDEFAULT";
+
+bool IsElevated() {
+    HANDLE token = nullptr;
+    if (!OpenProcessToken(GetCurrentProcess(), TOKEN_QUERY, &token)) {
+        return false;
+    }
+
+    TOKEN_ELEVATION elevation{};
+    DWORD size = sizeof(elevation);
+    bool elevated = false;
+    if (GetTokenInformation(token, TokenElevation, &elevation, sizeof(elevation), &size)) {
+        elevated = elevation.TokenIsElevated != 0;
+    }
+
+    CloseHandle(token);
+    return elevated;
+}
+
+// Relaunches this exe with a UAC elevation prompt. Returns false only if the relaunch
+// itself couldn't be started (e.g. the user cancelled the UAC prompt).
+bool RelaunchElevated() {
+    wchar_t exePath[MAX_PATH]{};
+    GetModuleFileNameW(nullptr, exePath, MAX_PATH);
+
+    SHELLEXECUTEINFOW sei{};
+    sei.cbSize = sizeof(sei);
+    sei.fMask = SEE_MASK_NOCLOSEPROCESS;
+    sei.lpVerb = L"runas";
+    sei.lpFile = exePath;
+    sei.nShow = SW_NORMAL;
+
+    if (!ShellExecuteExW(&sei)) {
+        return false;
+    }
+    if (sei.hProcess) {
+        CloseHandle(sei.hProcess);
+    }
+    return true;
+}
+
+// Windows Developer Mode is controlled by a single registry value -- this is exactly what
+// the Settings > For developers toggle flips. Setting it ourselves (we're elevated by this
+// point) means the user never has to find that setting manually. Requires no reboot.
+void EnsureDeveloperModeEnabled() {
+    HKEY key = nullptr;
+    LONG openResult = RegCreateKeyExW(
+        HKEY_LOCAL_MACHINE, L"SOFTWARE\\Microsoft\\Windows\\CurrentVersion\\AppModelUnlock", 0,
+        nullptr, REG_OPTION_NON_VOLATILE, KEY_READ | KEY_WRITE, nullptr, &key, nullptr);
+    if (openResult != ERROR_SUCCESS) {
+        std::wcerr << L"Could not access the Developer Mode registry key (error " << openResult
+                   << L") -- enable it manually via Settings > Privacy & security > For "
+                      L"developers if injection fails.\n";
+        return;
+    }
+
+    DWORD value = 0;
+    DWORD size = sizeof(value);
+    DWORD type = 0;
+    LONG queryResult = RegQueryValueExW(key, L"AllowDevelopmentWithoutDevLicense", nullptr,
+                                         &type, reinterpret_cast<LPBYTE>(&value), &size);
+
+    if (queryResult != ERROR_SUCCESS || value == 0) {
+        DWORD enabled = 1;
+        LONG setResult =
+            RegSetValueExW(key, L"AllowDevelopmentWithoutDevLicense", 0, REG_DWORD,
+                            reinterpret_cast<const BYTE*>(&enabled), sizeof(enabled));
+        if (setResult == ERROR_SUCCESS) {
+            std::wcout << L"Enabled Windows Developer Mode.\n";
+        } else {
+            std::wcerr << L"Failed to enable Developer Mode automatically (error " << setResult
+                       << L") -- enable it manually via Settings > Privacy & security > For "
+                          L"developers if injection fails.\n";
+        }
+    }
+
+    RegCloseKey(key);
+}
 
 // Writes an embedded RCDATA resource out to `destPath`. Returns false if the resource is
 // missing or the file couldn't be written.
@@ -224,6 +305,18 @@ bool InjectDll(DWORD pid, const std::wstring& dllPath) {
 }  // namespace
 
 int wmain() {
+    if (!IsElevated()) {
+        std::wcout << L"Not running elevated -- requesting administrator privileges...\n";
+        if (!RelaunchElevated()) {
+            std::wcerr << L"Elevation was cancelled or failed. This loader needs to run as "
+                          L"Administrator to inject into Minecraft.\n";
+            return 1;
+        }
+        return 0;  // The elevated relaunch continues in a new process/console.
+    }
+
+    EnsureDeveloperModeEnabled();
+
     wchar_t exePathBuf[MAX_PATH]{};
     GetModuleFileNameW(nullptr, exePathBuf, MAX_PATH);
     fs::path exeDir = fs::path(exePathBuf).parent_path();

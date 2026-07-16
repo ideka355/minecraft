@@ -32,8 +32,7 @@ set_source_files_properties("${GENERATED_RC}" PROPERTIES OBJECT_DEPENDS "${CHEAT
 
 set_target_properties(injector PROPERTIES OUTPUT_NAME "BedrockCheat")
 
-# NOMINMAX only -- WIN32_LEAN_AND_MEAN broke TRUSTEE_IS_WELLKNOWN_GROUP (accctrl.h's
-# declarations end up incomplete under it even with an explicit #include <accctrl.h>) and
-# the injector doesn't use std::min/max anyway, so there's nothing here for it to fix.
+# NOMINMAX only -- the injector doesn't call std::min/std::max, so WIN32_LEAN_AND_MEAN
+# (needed by cheat/src/core/MemoryRegions.cpp) isn't needed here.
 target_compile_definitions(injector PRIVATE UNICODE _UNICODE NOMINMAX)
-target_link_libraries(injector PRIVATE Shlwapi)
+target_link_libraries(injector PRIVATE Shlwapi Shell32 Advapi32)
