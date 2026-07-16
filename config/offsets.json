@@ -1,5 +1,5 @@
 {
-  "_comment": "All values are placeholders (0). Movement modules no-op until you fill these in for your exact Minecraft.Windows.exe build. Copy this file next to cheat.dll (the build already does this, see cheat/CMakeLists.txt POST_BUILD if you add one). Values may be given as hex strings (\"0x1A2B3C\") or plain integers.",
+  "_comment": "This is the template embedded inside BedrockCheat.exe and auto-copied next to it on first run. All values are placeholders (0) -- movement modules no-op until you fill these in for your exact Minecraft.Windows.exe build. Edit the offsets.json that shows up next to the exe (not this file) to change behavior without rebuilding. Values may be given as hex strings (\"0x1A2B3C\") or plain integers.",
 
   "clientInstanceRva": "0x0",
   "_clientInstanceRva": "RVA (offset from module base) of a static pointer that leads to the local player.",

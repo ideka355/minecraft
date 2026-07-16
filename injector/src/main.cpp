@@ -1,4 +1,8 @@
-// Injector for the cheat DLL into Minecraft.Windows.exe.
+// Single-file loader for the cheat: everything (the DLL and a default config) is embedded
+// in this executable as resources (see injector/CMakeLists.txt, which builds cheat.dll and
+// embeds it before compiling this file). At startup we extract the DLL to a per-run temp
+// directory and inject it into Minecraft.Windows.exe from there -- nothing needs to be
+// shipped alongside this .exe.
 //
 // Minecraft Bedrock for Windows runs as a sandboxed UWP (AppContainer) process.
 // Two things a plain injector needs beyond normal CreateRemoteThread injection:
@@ -9,7 +13,7 @@
 //      LoadLibrary a file its sandbox token has no access to. We do this here with
 //      SetNamedSecurityInfoW instead of shelling out to icacls.
 //
-// Run this injector elevated (as Administrator).
+// Run this loader elevated (as Administrator).
 
 #include <windows.h>
 #include <tlhelp32.h>
@@ -24,7 +28,64 @@ namespace fs = std::filesystem;
 namespace {
 
 constexpr wchar_t kTargetProcessName[] = L"Minecraft.Windows.exe";
-constexpr wchar_t kDllName[] = L"cheat.dll";
+
+// Names of the RCDATA resources embedded by injector/CMakeLists.txt.
+constexpr wchar_t kCheatDllResource[] = L"CHEATDLL";
+constexpr wchar_t kOffsetsDefaultResource[] = L"OFFSETSDEFAULT";
+
+// Writes an embedded RCDATA resource out to `destPath`. Returns false if the resource is
+// missing or the file couldn't be written.
+bool ExtractResource(const wchar_t* resourceName, const fs::path& destPath) {
+    HMODULE self = GetModuleHandleW(nullptr);
+    HRSRC res = FindResourceW(self, resourceName, RT_RCDATA);
+    if (!res) {
+        std::wcerr << L"Missing embedded resource " << resourceName << L"\n";
+        return false;
+    }
+
+    HGLOBAL data = LoadResource(self, res);
+    if (!data) {
+        return false;
+    }
+
+    void* bytes = LockResource(data);
+    DWORD size = SizeofResource(self, res);
+    if (!bytes || size == 0) {
+        return false;
+    }
+
+    HANDLE file = CreateFileW(destPath.c_str(), GENERIC_WRITE, 0, nullptr, CREATE_ALWAYS,
+                               FILE_ATTRIBUTE_NORMAL, nullptr);
+    if (file == INVALID_HANDLE_VALUE) {
+        return false;
+    }
+
+    DWORD written = 0;
+    bool ok = WriteFile(file, bytes, size, &written, nullptr) && written == size;
+    CloseHandle(file);
+    return ok;
+}
+
+// The user-editable offsets.json lives next to this .exe and persists across runs/updates.
+// On first launch it's materialized from the embedded default (all zeros).
+fs::path EnsurePersistentOffsetsConfig(const fs::path& exeDir) {
+    fs::path path = exeDir / L"offsets.json";
+    if (!fs::exists(path)) {
+        std::wcout << L"No offsets.json next to the exe - creating one from the built-in "
+                       L"template. Fill it in before enabling movement modules.\n";
+        ExtractResource(kOffsetsDefaultResource, path);
+    }
+    return path;
+}
+
+fs::path CreateWorkDir() {
+    wchar_t tempDir[MAX_PATH]{};
+    GetTempPathW(MAX_PATH, tempDir);
+
+    fs::path workDir = fs::path(tempDir) / (L"mcbc-" + std::to_wstring(GetCurrentProcessId()));
+    fs::create_directories(workDir);
+    return workDir;
+}
 
 DWORD FindProcessId(const wchar_t* processName) {
     HANDLE snapshot = CreateToolhelp32Snapshot(TH32CS_SNAPPROCESS, 0);
@@ -163,11 +224,23 @@ bool InjectDll(DWORD pid, const std::wstring& dllPath) {
 int wmain() {
     wchar_t exePathBuf[MAX_PATH]{};
     GetModuleFileNameW(nullptr, exePathBuf, MAX_PATH);
-    fs::path dllPath = fs::path(exePathBuf).parent_path() / kDllName;
-    if (!fs::exists(dllPath)) {
-        std::wcerr << L"Could not find " << kDllName << L" next to the injector.\n";
+    fs::path exeDir = fs::path(exePathBuf).parent_path();
+
+    fs::path persistentOffsets = EnsurePersistentOffsetsConfig(exeDir);
+
+    fs::path workDir = CreateWorkDir();
+    fs::path dllPath = workDir / L"cheat.dll";
+
+    if (!ExtractResource(kCheatDllResource, dllPath)) {
+        std::wcerr << L"Failed to extract the embedded cheat DLL.\n";
         return 1;
     }
+
+    // Copy the (user-editable) offsets.json into the same directory as the extracted DLL --
+    // the DLL looks for it next to itself, wherever that ends up being.
+    std::error_code ec;
+    fs::copy_file(persistentOffsets, workDir / L"offsets.json",
+                   fs::copy_options::overwrite_existing, ec);
 
     std::wcout << L"Waiting for " << kTargetProcessName << L"...\n";
 
@@ -188,8 +261,8 @@ int wmain() {
 
     if (!GrantAppContainerAccess(dllPath.wstring())) {
         std::wcerr << L"Warning: failed to grant AppContainer access to the DLL. "
-                       L"Injection into the sandboxed process may fail. Make sure the injector "
-                       L"is running as Administrator.\n";
+                       L"Injection into the sandboxed process may fail. Make sure this "
+                       L"loader is running as Administrator.\n";
     }
 
     if (!InjectDll(pid, dllPath.wstring())) {

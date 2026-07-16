@@ -32,14 +32,3 @@ target_link_libraries(cheat PRIVATE
     d3d11
     dxgi
 )
-
-# Keep offsets.json next to cheat.dll and the injector executable so both find it without
-# extra setup, and so editing it doesn't require a rebuild.
-add_custom_command(TARGET cheat POST_BUILD
-    COMMAND ${CMAKE_COMMAND} -E copy_if_different
-        "${CMAKE_SOURCE_DIR}/config/offsets.json"
-        "$<TARGET_FILE_DIR:cheat>/offsets.json"
-    COMMAND ${CMAKE_COMMAND} -E copy_if_different
-        "${CMAKE_SOURCE_DIR}/config/offsets.json"
-        "$<TARGET_FILE_DIR:injector>/offsets.json"
-)
