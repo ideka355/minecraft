@@ -6,6 +6,9 @@ on:
   pull_request:
   workflow_dispatch:
 
+permissions:
+  contents: write
+
 jobs:
   windows:
     runs-on: windows-latest
@@ -32,7 +35,7 @@ jobs:
       - name: Build
         run: cmake --build --preset windows-x64
 
-      - name: Upload build output
+      - name: Upload build output (CI artifact)
         if: always()
         uses: actions/upload-artifact@v4
         with:
@@ -41,3 +44,17 @@ jobs:
           # the exe is the only file that needs to ship.
           path: out/build/windows-x64/injector/BedrockCheat.exe
           if-no-files-found: warn
+
+      # Also publish it as a standalone GitHub Release asset -- a permanent top-level
+      # download link, rather than something buried inside a CI run's Artifacts tab.
+      # Rolls the same "latest-build" tag forward on every push so there's always exactly
+      # one current download.
+      - name: Publish latest-build release
+        if: github.event_name == 'push'
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: latest-build
+          name: Latest build (${{ github.sha }})
+          prerelease: true
+          body: Automatically built from ${{ github.ref_name }} @ ${{ github.sha }}.
+          files: out/build/windows-x64/injector/BedrockCheat.exe
