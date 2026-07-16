@@ -130,7 +130,7 @@ bool GrantAppContainerAccess(const std::wstring& path) {
         ea.grfAccessMode = GRANT_ACCESS;
         ea.grfInheritance = NO_INHERITANCE;
         ea.Trustee.TrusteeForm = TRUSTEE_IS_SID;
-        ea.Trustee.TrusteeType = TRUSTEE_IS_WELLKNOWN_GROUP;
+        ea.Trustee.TrusteeType = TRUSTEE_IS_WELL_KNOWN_GROUP;
         ea.Trustee.ptstrName = reinterpret_cast<LPWSTR>(sid);
 
         PACL existingAcl = nullptr;
