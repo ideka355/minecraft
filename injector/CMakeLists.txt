@@ -16,9 +16,19 @@ add_dependencies(injector cheat)
 
 # add_dependencies() alone only orders injector's final link after cheat -- it doesn't stop
 # Ninja from compiling embedded.rc (which needs cheat.dll's bytes to actually exist) in
-# parallel with cheat's own still-in-progress object compiles. OBJECT_DEPENDS adds a real
-# file-level dependency so the RC compile step waits for the DLL to exist first.
-set_source_files_properties("${GENERATED_RC}" PROPERTIES OBJECT_DEPENDS "$<TARGET_FILE:cheat>")
+# parallel with cheat's own still-in-progress object compiles. OBJECT_DEPENDS is meant to
+# fix that, but Ninja doesn't reliably resolve a $<TARGET_FILE:...> generator expression
+# given directly to it -- it ends up looking for a file literally named "$<TARGET_FILE:cheat>".
+# Route through a plain-path stamp file instead: a real build edge (DEPENDS cheat) whose
+# OUTPUT is an ordinary path, which OBJECT_DEPENDS handles fine.
+set(CHEAT_DLL_STAMP "${CMAKE_CURRENT_BINARY_DIR}/cheat_dll.stamp")
+add_custom_command(
+    OUTPUT "${CHEAT_DLL_STAMP}"
+    COMMAND ${CMAKE_COMMAND} -E touch "${CHEAT_DLL_STAMP}"
+    DEPENDS cheat
+    VERBATIM
+)
+set_source_files_properties("${GENERATED_RC}" PROPERTIES OBJECT_DEPENDS "${CHEAT_DLL_STAMP}")
 
 set_target_properties(injector PROPERTIES OUTPUT_NAME "BedrockCheat")
 
