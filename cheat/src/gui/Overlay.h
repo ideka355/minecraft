@@ -1,5 +1,9 @@
 #pragma once
 
+// Forward-declared rather than pulling in <windows.h> here.
+struct HWND__;
+using HWND = HWND__*;
+
 namespace gui {
 
 // Hooks the game's DXGI swapchain Present() to draw an ImGui overlay on top of the
@@ -13,5 +17,9 @@ class Overlay {
     static bool Install();
     static void Uninstall();
 };
+
+// The game's window handle, resolved once the swapchain hook first fires. nullptr before
+// then. Used by tools::InputSimulator to focus the game before simulating key input.
+HWND GetGameWindow();
 
 }  // namespace gui

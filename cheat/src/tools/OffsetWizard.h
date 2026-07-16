@@ -17,14 +17,23 @@ namespace tools {
 // found position and lets the user validate it survives a respawn. Writes the result to
 // offsets.json when done.
 //
-// This can't run unattended: finding "which memory address is position" requires you to
-// actually move so the scanner can see what changes. Open the panel with F5.
+// Two ways to run it, both opened with F5:
+//  - Manual (the "Start" button): you move/jump/type coordinates when prompted. You are
+//    the correctness check at two points -- confirming position matches your F3
+//    coordinates, and confirming a pointer chain survives a respawn.
+//  - Auto Setup (the "Auto Setup" button): simulates WASD/jump via SendInput and drives
+//    the whole flow unattended, substituting automatic heuristics for those two manual
+//    checks (converge-until-a-unique-candidate-survives; pick the shortest surviving
+//    pointer chain instead of respawn-validating). Faster and hands-off, but with neither
+//    manual correctness check, it's more likely to occasionally lock onto wrong offsets
+//    -- RenderStageDone() flags it if any auto-pick was ambiguous.
 class OffsetWizard : public core::Module {
    public:
     OffsetWizard();
 
    protected:
     void OnEnable() override;
+    void OnDisable() override;
     void OnTick() override;
 
    private:
@@ -64,6 +73,20 @@ class OffsetWizard : public core::Module {
     void Reset();
     void SaveResult();
 
+    // Auto Setup: simulates the same moves/clicks a human would make. Called at the top of
+    // OnTick() before Render() whenever autoMode_ is set; paces itself against real time
+    // (GetTickCount64()) rather than frame count so it doesn't spam input every frame, and
+    // never blocks -- all waiting is "not yet time to act, do nothing this frame".
+    void DriveAutoMode();
+    void StartAutoTap(int vk, int durationMs);
+    // Non-blocking: releases the held key once its duration has elapsed and returns true
+    // (exactly once, on that frame) so the caller knows a full tap just completed.
+    bool UpdateAutoTap();
+    void AutoDriveNarrowPosition();
+    void AutoDriveNarrowVelocity();
+    void AutoDriveNarrowOnGround();
+    void PickShortestSurvivingChainAndFinish();
+
     Stage stage_ = Stage::Intro;
 
     IncrementalScanner positionScanner_{ScanValueType::Float};
@@ -85,6 +108,15 @@ class OffsetWizard : public core::Module {
 
     std::thread worker_;
     std::atomic<bool> busy_ = false;
+
+    // Auto Setup state. Timestamps are GetTickCount64() milliseconds.
+    bool autoMode_ = false;
+    bool autoAmbiguous_ = false;    // true if any auto-pick had to guess among multiple survivors
+    bool autoChainRetried_ = false;
+    int autoRoundCount_ = 0;
+    int autoMoveKeyHeld_ = 0;       // VK code currently held down by auto-mode, 0 = none
+    unsigned long long autoKeyReleaseTick_ = 0;
+    unsigned long long autoNextActionTick_ = 0;
 };
 
 }  // namespace tools

@@ -215,4 +215,6 @@ void Overlay::Uninstall() {
     ReleaseRenderTarget();
 }
 
+HWND GetGameWindow() { return gameWindow; }
+
 }  // namespace gui

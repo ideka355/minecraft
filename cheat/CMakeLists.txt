@@ -23,6 +23,7 @@ add_library(cheat SHARED
     src/tools/Vec3Utils.cpp
     src/tools/PointerScanner.cpp
     src/tools/OffsetWizard.cpp
+    src/tools/InputSimulator.cpp
 )
 
 set_target_properties(cheat PROPERTIES OUTPUT_NAME "cheat")

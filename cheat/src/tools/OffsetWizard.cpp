@@ -10,6 +10,7 @@
 #include <imgui.h>
 
 #include "core/Offsets.h"
+#include "tools/InputSimulator.h"
 
 namespace tools {
 
@@ -34,6 +35,9 @@ bool SafeReadByte(uintptr_t address, uint8_t* out) {
 }
 
 constexpr uintptr_t kWindowRadius = 0x1000;  // search velocity/on-ground within +-4KB of position
+constexpr int kMaxAutoRounds = 15;  // give up converging and best-guess after this many narrows
+constexpr int kAutoTapDurationMs = 300;
+constexpr int kAutoSettleDurationMs = 300;  // pause after releasing a key, before the next Narrow()
 
 }  // namespace
 
@@ -41,7 +45,19 @@ OffsetWizard::OffsetWizard() : Module("Offset Finder", VK_F5) {}
 
 void OffsetWizard::OnEnable() {}
 
-void OffsetWizard::OnTick() { Render(); }
+void OffsetWizard::OnDisable() {
+    // OnTick() (and therefore UpdateAutoTap()) stops running while the window is closed --
+    // release any key Auto Setup was mid-press on so it doesn't stay stuck down.
+    if (autoMoveKeyHeld_ != 0) {
+        InputSimulator::KeyUp(autoMoveKeyHeld_);
+        autoMoveKeyHeld_ = 0;
+    }
+}
+
+void OffsetWizard::OnTick() {
+    DriveAutoMode();
+    Render();
+}
 
 void OffsetWizard::Render() {
     ImGui::SetNextWindowSize(ImVec2(440, 360), ImGuiCond_FirstUseEver);
@@ -95,10 +111,22 @@ void OffsetWizard::Render() {
 void OffsetWizard::RenderStageIntro() {
     ImGui::TextWrapped(
         "Finds position/velocity/on-ground offsets by watching what changes in memory as "
-        "you move -- it needs you to actually move when asked, it can't run unattended.");
+        "the player moves.");
     ImGui::Separator();
-    ImGui::TextWrapped("Stand still somewhere safe in the world, then click Start.");
+    ImGui::TextWrapped("Manual: stand still somewhere safe, then click Start. You'll be "
+                        "asked to move/jump and to confirm each result yourself.");
     if (ImGui::Button("Start")) {
+        StartPositionScan();
+    }
+    ImGui::Spacing();
+    ImGui::TextWrapped(
+        "Auto Setup: simulates the movement itself and picks results automatically -- no "
+        "input from you, but with no human double-checking the result either, so it's more "
+        "likely to occasionally lock onto the wrong address than doing it by hand. Stand "
+        "somewhere flat and empty first: the game will move the character on its own for a "
+        "few seconds per stage and nothing is watching for ledges, lava, or mobs.");
+    if (ImGui::Button("Auto Setup")) {
+        autoMode_ = true;
         StartPositionScan();
     }
 }
@@ -375,17 +403,7 @@ void OffsetWizard::RenderStageValidateChain() {
             "More than one still matches -- respawn again and re-validate to narrow "
             "further, or use the shortest one as a best guess.");
         if (ImGui::Button("Use shortest surviving chain")) {
-            size_t bestIdx = 0;
-            size_t bestLen = SIZE_MAX;
-            for (size_t i = 0; i < chainCandidates_.size(); ++i) {
-                if (chainStillValid_[i] && chainCandidates_[i].hops.size() < bestLen) {
-                    bestLen = chainCandidates_[i].hops.size();
-                    bestIdx = i;
-                }
-            }
-            chosenChain_ = chainCandidates_[bestIdx];
-            SaveResult();
-            stage_ = Stage::Done;
+            PickShortestSurvivingChainAndFinish();
         }
     } else if (remaining == 0) {
         ImGui::TextColored(ImVec4(1.f, 0.4f, 0.4f, 1.f),
@@ -395,6 +413,14 @@ void OffsetWizard::RenderStageValidateChain() {
 
 void OffsetWizard::RenderStageDone() {
     ImGui::TextColored(ImVec4(0.4f, 1.f, 0.4f, 1.f), "Done -- offsets saved.");
+    if (autoAmbiguous_) {
+        ImGui::TextColored(
+            ImVec4(1.f, 0.8f, 0.2f, 1.f),
+            "Auto Setup had to guess at at least one step (multiple candidates never "
+            "narrowed to one). Test each module carefully -- if something seems off "
+            "(crashes, no effect, wrong direction), delete offsets.json next to the exe and "
+            "re-run the wizard, ideally the manual path this time.");
+    }
     ImGui::TextWrapped(
         "Movement modules are now live. Close this window (F5) or click Reset to run the "
         "finder again (e.g. for a different offset).");
@@ -403,7 +429,233 @@ void OffsetWizard::RenderStageDone() {
     }
 }
 
+void OffsetWizard::DriveAutoMode() {
+    if (!autoMode_) {
+        return;
+    }
+
+    switch (stage_) {
+        case Stage::NarrowPosition:
+            AutoDriveNarrowPosition();
+            break;
+        case Stage::NarrowVelocity:
+            AutoDriveNarrowVelocity();
+            break;
+        case Stage::NarrowOnGround:
+            AutoDriveNarrowOnGround();
+            break;
+        case Stage::ReadyForChainScan:
+            StartChainScan();  // synchronously moves to Stage::ScanningChain
+            break;
+        case Stage::ChainFailed:
+            if (!autoChainRetried_) {
+                autoChainRetried_ = true;
+                busy_ = true;
+                stage_ = Stage::ScanningChain;
+                worker_ = std::thread([this] {
+                    chainCandidates_ = PointerScanner::Find(positionAddress_, 4, 0x4000);
+                    busy_ = false;
+                });
+            } else {
+                std::printf(
+                    "Offset Finder (auto): pointer chain search failed twice -- stopping "
+                    "auto mode. Try the manual wizard.\n");
+                autoMode_ = false;
+            }
+            break;
+        case Stage::ValidateChain:
+            PickShortestSurvivingChainAndFinish();
+            break;
+        default:
+            break;  // Intro/ScanningPositionSeed/Confirm*/ScanningChain/Done need no driving
+    }
+}
+
+void OffsetWizard::StartAutoTap(int vk, int durationMs) {
+    InputSimulator::FocusGameWindow();
+    InputSimulator::KeyDown(vk);
+    autoMoveKeyHeld_ = vk;
+    autoKeyReleaseTick_ = GetTickCount64() + static_cast<unsigned long long>(durationMs);
+}
+
+bool OffsetWizard::UpdateAutoTap() {
+    if (autoMoveKeyHeld_ == 0) {
+        return false;
+    }
+    if (GetTickCount64() < autoKeyReleaseTick_) {
+        return false;
+    }
+
+    InputSimulator::KeyUp(autoMoveKeyHeld_);
+    autoMoveKeyHeld_ = 0;
+    autoNextActionTick_ = GetTickCount64() + static_cast<unsigned long long>(kAutoSettleDurationMs);
+    return true;
+}
+
+void OffsetWizard::AutoDriveNarrowPosition() {
+    if (UpdateAutoTap()) {
+        positionScanner_.Narrow(0.01, 8.0);
+        ++autoRoundCount_;
+        positionCandidates_ = FindVec3Triplets(positionScanner_.Candidates());
+
+        bool converged = positionCandidates_.size() == 1;
+        bool outOfRounds = autoRoundCount_ >= kMaxAutoRounds;
+
+        if (converged || (outOfRounds && !positionCandidates_.empty())) {
+            if (!converged) {
+                autoAmbiguous_ = true;
+            }
+            positionAddress_ = positionCandidates_.front().address;
+            velocityScanner_.SeedRange(positionAddress_ - kWindowRadius, kWindowRadius * 2);
+            stage_ = Stage::NarrowVelocity;
+            autoRoundCount_ = 0;
+            autoNextActionTick_ = GetTickCount64() + kAutoSettleDurationMs;
+            return;
+        }
+        if (positionScanner_.CandidateCount() == 0 || outOfRounds) {
+            std::printf(
+                "Offset Finder (auto): position never converged -- stopping auto mode. Try "
+                "the manual wizard instead.\n");
+            autoMode_ = false;
+            return;
+        }
+    }
+
+    if (autoMoveKeyHeld_ == 0 && GetTickCount64() >= autoNextActionTick_) {
+        // Alternate strafing left/right (keeps net displacement near zero) with an
+        // occasional jump, rather than committed forward movement -- lower risk of
+        // wandering into a hazard unsupervised.
+        int vk = (autoRoundCount_ % 3 == 2) ? VK_SPACE : ((autoRoundCount_ % 2 == 0) ? 'A' : 'D');
+        StartAutoTap(vk, kAutoTapDurationMs);
+    }
+}
+
+void OffsetWizard::AutoDriveNarrowVelocity() {
+    if (UpdateAutoTap()) {
+        velocityScanner_.Narrow(0.001, 4.0);
+        ++autoRoundCount_;
+
+        auto found = FindVec3Triplets(velocityScanner_.Candidates(), positionAddress_);
+        found.erase(std::remove_if(found.begin(), found.end(),
+                                    [this](const Vec3Match& m) { return m.address == positionAddress_; }),
+                    found.end());
+        velocityCandidates_ = std::move(found);
+
+        bool converged = velocityCandidates_.size() == 1;
+        bool outOfRounds = autoRoundCount_ >= kMaxAutoRounds;
+
+        if (converged || (outOfRounds && !velocityCandidates_.empty())) {
+            if (!converged) {
+                autoAmbiguous_ = true;
+            }
+            velocityAddress_ = velocityCandidates_.front().address;
+            onGroundScanner_.SeedRange(positionAddress_ - kWindowRadius, kWindowRadius * 2);
+            stage_ = Stage::NarrowOnGround;
+            autoRoundCount_ = 0;
+            autoNextActionTick_ = GetTickCount64() + kAutoSettleDurationMs;
+            return;
+        }
+        if (outOfRounds) {
+            std::printf(
+                "Offset Finder (auto): no velocity candidate converged -- skipping "
+                "(Speed/Flight/NoFall/Spider may not work).\n");
+            velocityAddress_ = 0;
+            onGroundScanner_.SeedRange(positionAddress_ - kWindowRadius, kWindowRadius * 2);
+            stage_ = Stage::NarrowOnGround;
+            autoRoundCount_ = 0;
+            autoNextActionTick_ = GetTickCount64() + kAutoSettleDurationMs;
+            return;
+        }
+    }
+
+    if (autoMoveKeyHeld_ == 0 && GetTickCount64() >= autoNextActionTick_) {
+        int vk = (autoRoundCount_ % 2 == 0) ? 'A' : 'D';
+        StartAutoTap(vk, kAutoTapDurationMs);
+    }
+}
+
+void OffsetWizard::AutoDriveNarrowOnGround() {
+    if (UpdateAutoTap()) {
+        onGroundScanner_.Narrow(1.0, 1.0);
+        ++autoRoundCount_;
+
+        onGroundCandidates_ = onGroundScanner_.Candidates();
+        std::sort(onGroundCandidates_.begin(), onGroundCandidates_.end(),
+                  [this](const ScanCandidate& a, const ScanCandidate& b) {
+                      auto dist = [this](uintptr_t addr) {
+                          return addr > positionAddress_ ? addr - positionAddress_
+                                                          : positionAddress_ - addr;
+                      };
+                      return dist(a.address) < dist(b.address);
+                  });
+
+        bool converged = onGroundCandidates_.size() == 1;
+        bool outOfRounds = autoRoundCount_ >= kMaxAutoRounds;
+
+        if (converged || (outOfRounds && !onGroundCandidates_.empty())) {
+            if (!converged) {
+                autoAmbiguous_ = true;
+            }
+            onGroundAddress_ = onGroundCandidates_.front().address;
+            stage_ = Stage::ReadyForChainScan;
+            autoRoundCount_ = 0;
+            autoNextActionTick_ = GetTickCount64() + kAutoSettleDurationMs;
+            return;
+        }
+        if (outOfRounds) {
+            std::printf(
+                "Offset Finder (auto): no on-ground candidate converged -- skipping (NoFall "
+                "may not work).\n");
+            onGroundAddress_ = 0;
+            stage_ = Stage::ReadyForChainScan;
+            autoRoundCount_ = 0;
+            autoNextActionTick_ = GetTickCount64() + kAutoSettleDurationMs;
+            return;
+        }
+    }
+
+    if (autoMoveKeyHeld_ == 0 && GetTickCount64() >= autoNextActionTick_) {
+        StartAutoTap(VK_SPACE, 250);
+    }
+}
+
+void OffsetWizard::PickShortestSurvivingChainAndFinish() {
+    if (chainCandidates_.empty()) {
+        stage_ = Stage::ChainFailed;
+        return;
+    }
+
+    size_t bestIdx = 0;
+    size_t bestLen = SIZE_MAX;
+    bool any = false;
+    for (size_t i = 0; i < chainCandidates_.size(); ++i) {
+        bool eligible = chainStillValid_.empty() ||
+                        (i < chainStillValid_.size() && chainStillValid_[i]);
+        if (eligible && chainCandidates_[i].hops.size() < bestLen) {
+            bestLen = chainCandidates_[i].hops.size();
+            bestIdx = i;
+            any = true;
+        }
+    }
+    if (!any) {
+        bestIdx = 0;
+    }
+    if (chainCandidates_.size() > 1) {
+        autoAmbiguous_ = true;
+    }
+
+    chosenChain_ = chainCandidates_[bestIdx];
+    SaveResult();
+    stage_ = Stage::Done;
+}
+
 void OffsetWizard::Reset() {
+    if (autoMoveKeyHeld_ != 0) {
+        // Don't leave a simulated key stuck down if Reset happens mid-tap.
+        InputSimulator::KeyUp(autoMoveKeyHeld_);
+        autoMoveKeyHeld_ = 0;
+    }
+
     stage_ = Stage::Intro;
     positionCandidates_.clear();
     velocityCandidates_.clear();
@@ -414,6 +666,13 @@ void OffsetWizard::Reset() {
     velocityAddress_ = 0;
     onGroundAddress_ = 0;
     validateInput_[0] = validateInput_[1] = validateInput_[2] = 0.f;
+
+    autoMode_ = false;
+    autoAmbiguous_ = false;
+    autoChainRetried_ = false;
+    autoRoundCount_ = 0;
+    autoKeyReleaseTick_ = 0;
+    autoNextActionTick_ = 0;
 }
 
 void OffsetWizard::SaveResult() {

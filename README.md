@@ -33,28 +33,35 @@ are embedded as resources and self-extract at runtime. Nothing else needs to be 
 
 ## Finding offsets: the in-game auto-finder (F5)
 
-Press **F5** in-game to open the Offset Finder. It can't run unattended — there's no way for
-code to know which memory address is "position" without watching what changes while you
-physically move — but it automates the rest of what you'd otherwise do by hand in Cheat
-Engine:
+Press **F5** in-game to open the Offset Finder. Two modes, both reachable from the same panel:
 
-1. **Position**: it snapshots all plausible float values in the game's writable memory, then
-   you walk for a second and click Narrow, repeating a few times until only a handful of
-   candidates remain. You then click the one matching your F3 coordinates.
-2. **Velocity** / **on-ground**: same idea, scoped to a small window around the position
-   address you just confirmed — move again for velocity, jump a few times for on-ground.
-3. **Pointer chain**: it searches the game module's static memory for a chain of pointers
-   that resolves to your position address (an automated version of Cheat Engine's pointer
-   scan), so the offset keeps working across relaunches rather than just this session.
-4. If more than one chain candidate survives, it asks you to die/respawn (or relog) and type
-   your new coordinates in, then keeps only the chains that still resolve correctly —
-   coincidental matches won't.
-5. On success it writes straight into `offsets.json` next to `BedrockCheat.exe` and applies
-   immediately, no restart needed.
+- **Start** (manual): it snapshots all plausible float values in the game's writable
+  memory, then you walk for a second and click Narrow, repeating a few times until only a
+  handful of candidates remain, and you click the one matching your F3 coordinates. Same
+  for velocity (move again) and on-ground (jump a few times). For the final pointer-chain
+  step, if more than one candidate survives, it asks you to die/respawn (or relog) and type
+  your new coordinates in, keeping only chains that still resolve correctly.
+- **Auto Setup**: simulates the WASD/jump input itself (via `SendInput`) and drives the
+  same flow unattended -- no clicking, no typing. It substitutes automatic heuristics for
+  the two places manual mode relies on you: it keeps narrowing until exactly one candidate
+  survives (or best-guesses after ~15 rounds if it doesn't converge), and it picks the
+  shortest surviving pointer chain instead of respawn-validating. That means it has no
+  human double-checking its answer, so it's more likely than the manual path to
+  occasionally lock onto wrong offsets -- if the Done screen flags an ambiguous pick, or a
+  module misbehaves afterward, delete `offsets.json` and re-run (ideally manually) that
+  time. Also note: the character gets moved around by simulated input for a few seconds per
+  stage with nothing watching for ledges/lava/mobs, so start it somewhere flat and safe.
+
+Either way, once it converges, it searches the game module's static memory for a chain of
+pointers that resolves to the confirmed position address (an automated version of Cheat
+Engine's pointer scan), so the offset keeps working across relaunches rather than just this
+session, and writes straight into `offsets.json` next to `BedrockCheat.exe`, applying
+immediately with no restart needed.
 
 This is the most complex part of the codebase and the part I could least verify without a
 live Windows + Minecraft process to test against — if a step misbehaves (finds zero
-candidates, times out, etc.), the manual path below still works as a fallback.
+candidates, times out, etc.), the manual path still works as a fallback for Auto Setup, and
+manual reverse engineering (below) works as a fallback for both.
 
 ### Manual fallback
 
