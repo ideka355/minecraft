@@ -1,0 +1,21 @@
+{
+  "_comment": "All values are placeholders (0). Movement modules no-op until you fill these in for your exact Minecraft.Windows.exe build. Copy this file next to cheat.dll (the build already does this, see cheat/CMakeLists.txt POST_BUILD if you add one). Values may be given as hex strings (\"0x1A2B3C\") or plain integers.",
+
+  "clientInstanceRva": "0x0",
+  "_clientInstanceRva": "RVA (offset from module base) of a static pointer that leads to the local player.",
+
+  "localPlayerChain": ["0x0"],
+  "_localPlayerChain": "Byte offsets to add+dereference, in order, after the first dereference of clientInstanceRva, to reach the LocalPlayer/Actor object. Use as many entries as your version's class layout needs; trailing 0s are ignored.",
+
+  "positionOffset": "0x0",
+  "_positionOffset": "Byte offset within the resolved player object to a Vec3<float> world position.",
+
+  "velocityOffset": "0x0",
+  "_velocityOffset": "Byte offset to a Vec3<float> velocity. Required by Flight, Speed, NoFall, Spider.",
+
+  "onGroundOffset": "0x0",
+  "_onGroundOffset": "Byte offset to a bool 'is on ground' flag. Required by NoFall.",
+
+  "noClipFlagOffset": "0x0",
+  "_noClipFlagOffset": "Byte offset to a bool/flag controlling collision. Required by NoClip."
+}
