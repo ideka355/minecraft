@@ -14,6 +14,12 @@ add_executable(injector
 
 add_dependencies(injector cheat)
 
+# add_dependencies() alone only orders injector's final link after cheat -- it doesn't stop
+# Ninja from compiling embedded.rc (which needs cheat.dll's bytes to actually exist) in
+# parallel with cheat's own still-in-progress object compiles. OBJECT_DEPENDS adds a real
+# file-level dependency so the RC compile step waits for the DLL to exist first.
+set_source_files_properties("${GENERATED_RC}" PROPERTIES OBJECT_DEPENDS "$<TARGET_FILE:cheat>")
+
 set_target_properties(injector PROPERTIES OUTPUT_NAME "BedrockCheat")
 
 target_compile_definitions(injector PRIVATE UNICODE _UNICODE NOMINMAX WIN32_LEAN_AND_MEAN)

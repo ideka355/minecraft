@@ -17,6 +17,7 @@
 
 #include <windows.h>
 #include <tlhelp32.h>
+#include <accctrl.h>
 #include <aclapi.h>
 #include <sddl.h>
 #include <iostream>
